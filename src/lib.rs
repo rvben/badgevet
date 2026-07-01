@@ -248,19 +248,44 @@ where
         .collect()
 }
 
-/// Read the requested local paths into scannable documents.
+/// Read the requested local inputs into scannable documents. A path of `-`
+/// reads Markdown from stdin.
 fn local_documents(paths: &[PathBuf]) -> Result<Vec<Document>, Error> {
-    let files = resolve_files(paths)?;
-    let mut documents = Vec::with_capacity(files.len());
-    for file in files {
-        let content = std::fs::read_to_string(&file).map_err(|e| Error::Io {
-            path: file.display().to_string(),
-            message: e.to_string(),
+    let read_stdin = paths.iter().any(|p| p.as_os_str() == "-");
+    let file_inputs: Vec<PathBuf> = paths
+        .iter()
+        .filter(|p| p.as_os_str() != "-")
+        .cloned()
+        .collect();
+
+    let mut documents = Vec::new();
+    if read_stdin {
+        let mut content = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut content).map_err(|e| {
+            Error::Io {
+                path: "<stdin>".to_string(),
+                message: e.to_string(),
+            }
         })?;
         documents.push(Document {
-            name: file.display().to_string(),
+            name: "<stdin>".to_string(),
             content,
         });
+    }
+
+    // Resolve file inputs; fall back to the default README only when nothing at
+    // all (no files and no stdin) was requested.
+    if !file_inputs.is_empty() || !read_stdin {
+        for file in resolve_files(&file_inputs)? {
+            let content = std::fs::read_to_string(&file).map_err(|e| Error::Io {
+                path: file.display().to_string(),
+                message: e.to_string(),
+            })?;
+            documents.push(Document {
+                name: file.display().to_string(),
+                content,
+            });
+        }
     }
     Ok(documents)
 }

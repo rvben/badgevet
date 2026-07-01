@@ -30,6 +30,30 @@ fn run(args: &[&str]) -> Output {
     run_in(Path::new(env!("CARGO_MANIFEST_DIR")), args)
 }
 
+fn run_with_stdin(args: &[&str], input: &str) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new(BIN)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn binary");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    Output {
+        code: out.status.code().unwrap(),
+        stdout: String::from_utf8(out.stdout).unwrap(),
+        stderr: String::from_utf8(out.stderr).unwrap(),
+    }
+}
+
 fn error_envelope(stderr: &str) -> serde_json::Value {
     let last = stderr.lines().last().expect("stderr has an error line");
     serde_json::from_str::<serde_json::Value>(last).expect("error envelope is JSON")["error"]
@@ -86,6 +110,18 @@ fn file_without_badges_reports_none() {
     .unwrap();
     // stdout is piped (not a TTY), so output is JSON.
     let out = run_in(dir.path(), &["doc.md"]);
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    let v: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(v["summary"]["total"], 0);
+}
+
+#[test]
+fn stdin_dash_reads_markdown() {
+    // Markdown with no badge-host images: no network, empty report, exit 0.
+    let out = run_with_stdin(
+        &["-"],
+        "# Title\n\n[link](https://example.com) and prose.\n",
+    );
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
     let v: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
     assert_eq!(v["summary"]["total"], 0);

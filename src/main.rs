@@ -31,7 +31,7 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// Markdown files or directories to scan (default: README.md in the cwd).
+    /// Markdown files or directories to scan, or `-` for stdin (default: README.md).
     #[arg(value_name = "PATH")]
     paths: Vec<PathBuf>,
 

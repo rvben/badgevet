@@ -32,7 +32,7 @@ pub fn contract() -> Value {
                 "mutating": false,
                 "stability": "stable",
                 "args": [
-                    {"name": "path", "type": "path", "required": false, "description": "Markdown files or directories to scan (default: README.md)."},
+                    {"name": "path", "type": "path", "required": false, "description": "Markdown files or directories to scan, or `-` for stdin (default: README.md)."},
                     {"name": "--github", "type": "string", "description": "Scan an owner's GitHub repositories (their canonical READMEs) instead of local paths."},
                     {"name": "--include-forks", "type": "boolean", "default": false, "description": "With --github: include forks."},
                     {"name": "--include-archived", "type": "boolean", "default": false, "description": "With --github: include archived repositories."},
