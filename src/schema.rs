@@ -33,6 +33,10 @@ pub fn contract() -> Value {
                 "stability": "stable",
                 "args": [
                     {"name": "path", "type": "path", "required": false, "description": "Markdown files or directories to scan (default: README.md)."},
+                    {"name": "--github", "type": "string", "description": "Scan an owner's GitHub repositories (their canonical READMEs) instead of local paths."},
+                    {"name": "--include-forks", "type": "boolean", "default": false, "description": "With --github: include forks."},
+                    {"name": "--include-archived", "type": "boolean", "default": false, "description": "With --github: include archived repositories."},
+                    {"name": "--include-private", "type": "boolean", "default": false, "description": "With --github: include private repositories (needs a token with repo scope)."},
                     {"name": "--only-broken", "type": "boolean", "default": false, "description": "Report only permanently broken badges."},
                     {"name": "--strict", "type": "boolean", "default": false, "description": "Also exit 1 on unconfirmed badges, not just broken ones."},
                     {"name": "--retries", "type": "integer", "default": 2, "description": "Re-fetch an ambiguous badge this many times before reporting it unconfirmed."},
@@ -71,7 +75,8 @@ pub fn contract() -> Value {
         "errors": [
             {"kind": "usage", "exit_code": 3, "retryable": false, "description": "Invalid command-line arguments, or no scan target and no README.md."},
             {"kind": "io", "exit_code": 2, "retryable": false, "description": "A path could not be read."},
-            {"kind": "http", "exit_code": 2, "retryable": true, "description": "The HTTP client could not be constructed."}
+            {"kind": "http", "exit_code": 2, "retryable": true, "description": "The HTTP client could not be constructed."},
+            {"kind": "github", "exit_code": 2, "retryable": true, "description": "A GitHub API request failed (listing repositories or fetching a README)."}
         ]
     })
 }

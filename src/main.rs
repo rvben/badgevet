@@ -10,7 +10,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use badgevet::{Error, OutputFormat, Request, ReqwestHttp, RetryPolicy, render, run, schema};
+use badgevet::{
+    Error, GitHubScope, OutputFormat, Request, ReqwestHttp, RetryPolicy, Source, render, run,
+    schema,
+};
 use clap::error::ErrorKind as ClapErrorKind;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use serde_json::json;
@@ -31,6 +34,22 @@ struct Cli {
     /// Markdown files or directories to scan (default: README.md in the cwd).
     #[arg(value_name = "PATH")]
     paths: Vec<PathBuf>,
+
+    /// Scan an owner's GitHub repositories instead of local paths.
+    #[arg(long, value_name = "OWNER", conflicts_with = "paths")]
+    github: Option<String>,
+
+    /// With --github: include forks.
+    #[arg(long)]
+    include_forks: bool,
+
+    /// With --github: include archived repositories.
+    #[arg(long)]
+    include_archived: bool,
+
+    /// With --github: include private repositories (needs a token with repo scope).
+    #[arg(long)]
+    include_private: bool,
 
     /// Report only permanently broken badges.
     #[arg(long)]
@@ -115,8 +134,18 @@ fn main() -> ExitCode {
         }
     };
 
+    let source = match cli.github.clone() {
+        Some(owner) => Source::GitHub(GitHubScope {
+            owner,
+            include_forks: cli.include_forks,
+            include_archived: cli.include_archived,
+            include_private: cli.include_private,
+        }),
+        None => Source::Paths(cli.paths.clone()),
+    };
+
     let request = Request {
-        paths: cli.paths.clone(),
+        source,
         format: cli.output.resolve(),
         strict: cli.strict,
         only_broken: cli.only_broken,

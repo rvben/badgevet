@@ -6,11 +6,14 @@
 //! fetches each badge and reads that rendered title instead.
 //!
 //! The whole pipeline is reachable through [`run`], which is generic over the
-//! [`Http`] seam so tests drive it with canned responses (no network).
+//! [`Http`] seam so tests drive it with canned responses (no network). A scan
+//! draws its Markdown either from local paths or, with [`Source::GitHub`], from
+//! the canonical READMEs of an owner's repositories.
 
 mod classify;
 mod error;
 mod fetch;
+mod github;
 mod markdown;
 mod model;
 mod output;
@@ -19,6 +22,7 @@ pub mod schema;
 
 pub use error::Error;
 pub use fetch::{Http, ReqwestHttp, RetryPolicy};
+pub use github::GitHubScope;
 pub use model::{Badge, BadgeResult, Report, State};
 pub use output::render;
 
@@ -39,11 +43,19 @@ pub enum OutputFormat {
     Json,
 }
 
+/// Where a scan draws its Markdown from.
+#[derive(Debug, Clone)]
+pub enum Source {
+    /// Local files and directories (directories recurse for Markdown).
+    Paths(Vec<PathBuf>),
+    /// The canonical READMEs of an owner's GitHub repositories.
+    GitHub(GitHubScope),
+}
+
 /// A complete badgevet request.
 #[derive(Debug, Clone)]
 pub struct Request {
-    /// Files or directories to scan. Empty means "README.md in the cwd".
-    pub paths: Vec<PathBuf>,
+    pub source: Source,
     pub format: OutputFormat,
     /// Also treat unconfirmed badges as a failure in the exit code.
     pub strict: bool,
@@ -52,20 +64,25 @@ pub struct Request {
     pub retry: RetryPolicy,
 }
 
+/// A piece of Markdown to scan, with a display name (a path or `owner/repo`).
+#[derive(Debug)]
+pub(crate) struct Document {
+    pub name: String,
+    pub content: String,
+}
+
 /// Run a scan and return the report. `strict` and `only_broken` affect the exit
 /// code and rendering respectively, both applied by the caller.
 pub fn run(http: &dyn Http, req: &Request) -> Result<Report, Error> {
-    let files = resolve_files(&req.paths)?;
+    let documents = match &req.source {
+        Source::Paths(paths) => local_documents(paths)?,
+        Source::GitHub(scope) => github::fetch_readmes(http, scope)?,
+    };
 
     let mut badges: Vec<Badge> = Vec::new();
-    for file in &files {
-        let content = std::fs::read_to_string(file).map_err(|e| Error::Io {
-            path: file.display().to_string(),
-            message: e.to_string(),
-        })?;
-        let name = file.display().to_string();
+    for doc in &documents {
         badges.extend(
-            markdown::extract_images(&content, &name)
+            markdown::extract_images(&doc.content, &doc.name)
                 .into_iter()
                 .filter(|b| provider::is_badge_url(&b.url)),
         );
@@ -113,28 +130,61 @@ fn check_all(
     urls: &[String],
     retry: RetryPolicy,
 ) -> HashMap<String, (State, Option<String>)> {
-    if urls.is_empty() {
-        return HashMap::new();
-    }
-    let results: Mutex<HashMap<String, (State, Option<String>)>> = Mutex::new(HashMap::new());
-    let next = AtomicUsize::new(0);
     let sleep = |d: Duration| thread::sleep(d);
-    let workers = urls.len().min(MAX_WORKERS);
+    let outcomes = parallel_map(urls, MAX_WORKERS, |_, url| {
+        fetch::check(http, url, retry, &sleep)
+    });
+    urls.iter().cloned().zip(outcomes).collect()
+}
+
+/// Map `f` over `items` using at most `max_workers` threads, preserving order.
+pub(crate) fn parallel_map<T, R, F>(items: &[T], max_workers: usize, f: F) -> Vec<R>
+where
+    T: Sync,
+    R: Send,
+    F: Fn(usize, &T) -> R + Sync,
+{
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let slots: Vec<Mutex<Option<R>>> = (0..items.len()).map(|_| Mutex::new(None)).collect();
+    let next = AtomicUsize::new(0);
+    let workers = max_workers.min(items.len());
 
     thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| {
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
-                    let Some(url) = urls.get(i) else { break };
-                    let outcome = fetch::check(http, url, retry, &sleep);
-                    results.lock().unwrap().insert(url.clone(), outcome);
+                    let Some(item) = items.get(i) else { break };
+                    let value = f(i, item);
+                    *slots[i].lock().unwrap() = Some(value);
                 }
             });
         }
     });
 
-    results.into_inner().unwrap()
+    slots
+        .into_iter()
+        .map(|slot| slot.into_inner().unwrap().expect("every slot filled"))
+        .collect()
+}
+
+/// Read the requested local paths into scannable documents.
+fn local_documents(paths: &[PathBuf]) -> Result<Vec<Document>, Error> {
+    let files = resolve_files(paths)?;
+    let mut documents = Vec::with_capacity(files.len());
+    for file in files {
+        let content = std::fs::read_to_string(&file).map_err(|e| Error::Io {
+            path: file.display().to_string(),
+            message: e.to_string(),
+        })?;
+        documents.push(Document {
+            name: file.display().to_string(),
+            content,
+        });
+    }
+    Ok(documents)
 }
 
 /// Expand the requested paths into a concrete list of Markdown files.

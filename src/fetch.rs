@@ -8,15 +8,24 @@ use crate::classify::{Verdict, classify_title};
 use crate::model::State;
 use std::time::Duration;
 
-/// A minimal HTTP GET. `Ok(body)` on 2xx, `Err(reason)` on non-2xx or transport
-/// failure. A failed fetch is not fatal: the caller treats it as ambiguous.
+/// The HTTP surface badgevet needs. `get` fetches a badge SVG; `get_github`
+/// fetches from the GitHub API (adding auth and distinguishing 404). Both are a
+/// seam: [`ReqwestHttp`] hits the network, tests substitute a fake.
 pub trait Http: Sync {
+    /// Fetch a badge. `Ok(body)` on 2xx, `Err(reason)` on non-2xx or transport
+    /// failure. A failed fetch is not fatal: the caller treats it as ambiguous.
     fn get(&self, url: &str) -> Result<String, String>;
+
+    /// Fetch from the GitHub API. `Ok(Some(body))` on 2xx, `Ok(None)` on 404
+    /// (e.g. a repo with no README), `Err(reason)` otherwise.
+    fn get_github(&self, url: &str) -> Result<Option<String>, String>;
 }
 
 /// The real client: reqwest blocking with rustls.
 pub struct ReqwestHttp {
     client: reqwest::blocking::Client,
+    /// Optional token; lifts GitHub's 60 req/hr unauthenticated limit.
+    github_token: Option<String>,
 }
 
 impl ReqwestHttp {
@@ -28,7 +37,14 @@ impl ReqwestHttp {
             .map_err(|e| crate::Error::Http {
                 message: e.to_string(),
             })?;
-        Ok(Self { client })
+        let github_token = std::env::var("GITHUB_TOKEN")
+            .ok()
+            .or_else(|| std::env::var("GH_TOKEN").ok())
+            .filter(|t| !t.is_empty());
+        Ok(Self {
+            client,
+            github_token,
+        })
     }
 }
 
@@ -40,6 +56,31 @@ impl Http for ReqwestHttp {
             return Err(format!("HTTP {status}"));
         }
         resp.text().map_err(|e| e.to_string())
+    }
+
+    fn get_github(&self, url: &str) -> Result<Option<String>, String> {
+        let mut req = self
+            .client
+            .get(url)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28");
+        if let Some(token) = &self.github_token {
+            req = req.bearer_auth(token);
+        }
+        let resp = req.send().map_err(|e| e.to_string())?;
+        let status = resp.status().as_u16();
+        if status == 404 {
+            return Ok(None);
+        }
+        if status == 403 || status == 429 {
+            return Err(format!(
+                "HTTP {status} (rate limited; set GITHUB_TOKEN to raise the limit)"
+            ));
+        }
+        if !(200..300).contains(&status) {
+            return Err(format!("HTTP {status}"));
+        }
+        resp.text().map(Some).map_err(|e| e.to_string())
     }
 }
 
@@ -118,6 +159,10 @@ mod tests {
                 .get(url)
                 .cloned()
                 .unwrap_or_else(|| Err("unmapped url".into()))
+        }
+
+        fn get_github(&self, _url: &str) -> Result<Option<String>, String> {
+            Ok(None)
         }
     }
 

@@ -20,6 +20,10 @@ pub enum Error {
     /// The HTTP client could not be constructed.
     #[error("{message}")]
     Http { message: String },
+
+    /// A GitHub API request failed (listing repositories or fetching a README).
+    #[error("{message}")]
+    GitHub { message: String },
 }
 
 impl Error {
@@ -29,6 +33,7 @@ impl Error {
             Error::Usage { .. } => "usage",
             Error::Io { .. } => "io",
             Error::Http { .. } => "http",
+            Error::GitHub { .. } => "github",
         }
     }
 
@@ -38,13 +43,14 @@ impl Error {
             Error::Usage { .. } => Some("see `badgevet --help` or `badgevet schema`"),
             Error::Io { .. } => Some("check the path exists and is readable"),
             Error::Http { .. } => Some("check network connectivity"),
+            Error::GitHub { .. } => Some("check the owner name, or set GITHUB_TOKEN"),
         }
     }
 
     /// The process exit code associated with this error.
     pub fn exit_code(&self) -> i32 {
         match self {
-            Error::Io { .. } | Error::Http { .. } => 2,
+            Error::Io { .. } | Error::Http { .. } | Error::GitHub { .. } => 2,
             Error::Usage { .. } => 3,
         }
     }

@@ -24,9 +24,25 @@ cargo binstall badgevet
 ```sh
 badgevet                    # scan README.md in the current directory
 badgevet docs/ README.md    # scan files and directories (dirs recurse for *.md)
+badgevet ~/Projects/mine    # one command scans every README under all your local repos
 badgevet --only-broken .    # report only permanently broken badges
 badgevet | jq .             # JSON when piped
 ```
+
+### Check every repo you own
+
+Point badgevet at an owner and it checks the **canonical published README** of
+each of their repositories - no cloning needed. It reads the same README GitHub
+shows the world, so it catches badge rot even in repos you rarely touch.
+
+```sh
+badgevet --github rvben              # all your public, non-fork, non-archived repos
+badgevet --github rvben --only-broken
+```
+
+Set `GITHUB_TOKEN` (or `GH_TOKEN`) to lift GitHub's unauthenticated rate limit;
+required for `--include-private`. Widen the default scope with
+`--include-forks`, `--include-archived`, `--include-private`.
 
 Example:
 
@@ -60,6 +76,10 @@ rewrites your files.
 
 | Flag | Default | Description |
 | --- | --- | --- |
+| `--github <owner>` | - | Scan an owner's GitHub repos instead of local paths. |
+| `--include-forks` | off | With `--github`: include forks. |
+| `--include-archived` | off | With `--github`: include archived repos. |
+| `--include-private` | off | With `--github`: include private repos (needs a token). |
 | `--only-broken` | off | Report only permanently broken badges. |
 | `--strict` | off | Also exit 1 on `unconfirmed` badges. |
 | `--retries <n>` | `2` | Re-fetch an ambiguous badge before giving up. |

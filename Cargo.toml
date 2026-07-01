@@ -21,6 +21,7 @@ name = "badgevet"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 pulldown-cmark = { version = "0.13", default-features = false }
