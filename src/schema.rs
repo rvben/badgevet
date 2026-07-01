@@ -51,7 +51,8 @@ pub fn contract() -> Value {
                     {"name": "state", "type": "string", "description": "ok, broken, or unconfirmed."},
                     {"name": "rendered", "type": "string", "description": "Text rendered inside the badge SVG title, when observed."},
                     {"name": "suggestion", "type": "string", "description": "Modern replacement URL for a known-dead badge, when known."}
-                ]
+                ],
+                "example": {"args": ["-"], "stdin": ""}
             },
             {
                 "name": "fix",
