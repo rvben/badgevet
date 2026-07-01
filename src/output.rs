@@ -1,7 +1,7 @@
 //! Rendering a scan report as a table (TTY) or JSON (piped).
 
 use crate::OutputFormat;
-use crate::model::{BadgeResult, Report, State};
+use crate::model::{BadgeResult, FixResult, Report, State};
 use serde_json::json;
 
 /// Render a report. With `only_broken`, healthy and unconfirmed rows are hidden
@@ -24,6 +24,41 @@ pub fn render(report: &Report, only_broken: bool, format: OutputFormat) -> Strin
         })
         .to_string(),
         OutputFormat::Table => table(&shown, report, only_broken),
+    }
+}
+
+/// Render a `fix` result as a table (TTY) or JSON (piped).
+pub fn render_fix(result: &FixResult, format: OutputFormat) -> String {
+    match format {
+        OutputFormat::Json => json!({
+            "fixed": result.fixed,
+            "summary": { "fixed": result.fixed.len(), "unfixable": result.unfixable },
+        })
+        .to_string(),
+        OutputFormat::Table => {
+            if result.fixed.is_empty() {
+                return if result.unfixable == 0 {
+                    "no broken badges to fix".to_string()
+                } else {
+                    format!(
+                        "nothing fixable ({} broken with no known replacement)",
+                        result.unfixable
+                    )
+                };
+            }
+            let mut rows = Vec::new();
+            for f in &result.fixed {
+                rows.push(format!("fixed  {}", f.file));
+                rows.push(format!("       {} -> {}", f.old, f.new));
+            }
+            rows.push(String::new());
+            rows.push(format!(
+                "{} fixed · {} unfixable",
+                result.fixed.len(),
+                result.unfixable
+            ));
+            rows.join("\n")
+        }
     }
 }
 

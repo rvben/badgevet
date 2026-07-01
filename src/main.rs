@@ -11,8 +11,8 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use badgevet::{
-    Error, GitHubScope, OutputFormat, Request, ReqwestHttp, RetryPolicy, Source, render, run,
-    schema,
+    Error, GitHubScope, OutputFormat, Request, ReqwestHttp, RetryPolicy, Source, apply_fixes,
+    render, render_fix, run, schema,
 };
 use clap::error::ErrorKind as ClapErrorKind;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
@@ -74,6 +74,20 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Rewrite broken badges in local Markdown in place, using each one's known
+    /// modern replacement. Broken badges with no known replacement are left and
+    /// counted as unfixable.
+    Fix {
+        /// Markdown files or directories to fix (default: README.md in the cwd).
+        #[arg(value_name = "PATH")]
+        paths: Vec<PathBuf>,
+        /// Re-fetch an ambiguous badge this many times before reporting it unconfirmed.
+        #[arg(long, default_value_t = 2)]
+        retries: u32,
+        /// Per-request HTTP timeout, in seconds.
+        #[arg(long, default_value_t = 10)]
+        timeout: u64,
+    },
     /// Print the machine-readable contract (clispec.dev) as JSON.
     Schema,
     /// Generate a shell completion script.
@@ -113,6 +127,13 @@ fn main() -> ExitCode {
     };
 
     match &cli.command {
+        Some(Command::Fix {
+            paths,
+            retries,
+            timeout,
+        }) => {
+            return run_fix(paths, *timeout, *retries, cli.output.resolve());
+        }
         Some(Command::Schema) => {
             println!("{}", schema::contract_json());
             return ExitCode::SUCCESS;
@@ -160,6 +181,45 @@ fn main() -> ExitCode {
             let out = render(&report, request.only_broken, request.format);
             let _ = writeln!(std::io::stdout(), "{out}");
             ExitCode::from(report.exit_code(request.strict) as u8)
+        }
+        Err(err) => {
+            emit_error(&err);
+            ExitCode::from(err.exit_code() as u8)
+        }
+    }
+}
+
+/// Scan the given local paths, then rewrite each broken badge that has a known
+/// replacement in place. Exits 1 if broken badges remain that could not be fixed.
+fn run_fix(paths: &[PathBuf], timeout: u64, retries: u32, format: OutputFormat) -> ExitCode {
+    let http = match ReqwestHttp::new(Duration::from_secs(timeout)) {
+        Ok(http) => http,
+        Err(err) => {
+            emit_error(&err);
+            return ExitCode::from(err.exit_code() as u8);
+        }
+    };
+    let request = Request {
+        source: Source::Paths(paths.to_vec()),
+        format,
+        strict: false,
+        only_broken: false,
+        retry: RetryPolicy {
+            retries,
+            backoff: Duration::from_millis(400),
+        },
+    };
+    let report = match run(&http, &request) {
+        Ok(report) => report,
+        Err(err) => {
+            emit_error(&err);
+            return ExitCode::from(err.exit_code() as u8);
+        }
+    };
+    match apply_fixes(&report) {
+        Ok(fix) => {
+            let _ = writeln!(std::io::stdout(), "{}", render_fix(&fix, format));
+            ExitCode::from(fix.exit_code() as u8)
         }
         Err(err) => {
             emit_error(&err);

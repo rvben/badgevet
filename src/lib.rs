@@ -23,10 +23,10 @@ pub mod schema;
 pub use error::Error;
 pub use fetch::{Http, ReqwestHttp, RetryPolicy};
 pub use github::GitHubScope;
-pub use model::{Badge, BadgeResult, Report, State};
-pub use output::render;
+pub use model::{AppliedFix, Badge, BadgeResult, FixResult, Report, State};
+pub use output::{render, render_fix};
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -122,6 +122,59 @@ pub fn run(http: &dyn Http, req: &Request) -> Result<Report, Error> {
         .collect();
 
     Ok(Report { results })
+}
+
+/// Rewrite each broken badge that has a known replacement, in place, in its
+/// local file. Returns what was changed plus how many broken badges had no known
+/// replacement (and so were left untouched). Intended for local-path reports;
+/// the badge `file` must be a readable path.
+pub fn apply_fixes(report: &Report) -> Result<FixResult, Error> {
+    let mut by_file: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    let mut unfixable = 0;
+    for r in &report.results {
+        if r.state != State::Broken {
+            continue;
+        }
+        match &r.suggestion {
+            Some(new) => {
+                by_file
+                    .entry(r.file.clone())
+                    .or_default()
+                    .push((r.url.clone(), new.clone()));
+            }
+            None => unfixable += 1,
+        }
+    }
+
+    let mut fixed = Vec::new();
+    for (file, replacements) in by_file {
+        let mut content = std::fs::read_to_string(&file).map_err(|e| Error::Io {
+            path: file.clone(),
+            message: e.to_string(),
+        })?;
+        let mut seen = BTreeSet::new();
+        let mut changed = false;
+        for (old, new) in replacements {
+            if !seen.insert(old.clone()) || !content.contains(&old) {
+                continue;
+            }
+            content = content.replace(&old, &new);
+            changed = true;
+            fixed.push(AppliedFix {
+                file: file.clone(),
+                old,
+                new,
+            });
+        }
+        if changed {
+            std::fs::write(&file, content).map_err(|e| Error::Io {
+                path: file.clone(),
+                message: e.to_string(),
+            })?;
+        }
+    }
+
+    Ok(FixResult { fixed, unfixable })
 }
 
 /// Check every unique URL, up to [`MAX_WORKERS`] at a time.

@@ -54,6 +54,22 @@ pub fn contract() -> Value {
                 ]
             },
             {
+                "name": "fix",
+                "description": "Rewrite broken badges in local Markdown in place, using each one's known modern replacement (e.g. shields.io's retired Visual Studio Marketplace routes -> vsmarketplacebadges.dev). Scans the given paths (default README.md), applies the replacements `scan` suggests, and leaves broken badges with no known replacement untouched. Only local paths; not compatible with --github.",
+                "mutating": true,
+                "stability": "stable",
+                "args": [
+                    {"name": "path", "type": "path", "required": false, "description": "Markdown files or directories to fix (default: README.md)."},
+                    {"name": "--retries", "type": "integer", "default": 2, "description": "Re-fetch an ambiguous badge this many times before reporting it unconfirmed."},
+                    {"name": "--timeout", "type": "integer", "default": 10, "description": "Per-request HTTP timeout, in seconds."}
+                ],
+                "output_fields": [
+                    {"name": "file", "type": "path", "description": "File that was rewritten."},
+                    {"name": "old", "type": "string", "description": "The broken badge URL that was replaced."},
+                    {"name": "new", "type": "string", "description": "The replacement badge URL written in its place."}
+                ]
+            },
+            {
                 "name": "schema",
                 "description": "Print this clispec contract as JSON.",
                 "mutating": false,

@@ -69,8 +69,24 @@ bad badge and when its upstream API is merely rate-limiting, so `unconfirmed`
 never fails your build by default. Only an explicit, permanent dead state does.
 
 When a known-dead pattern has a modern replacement (e.g. shields.io's retired
-Visual Studio Marketplace routes), badgevet prints the suggested URL. It never
-rewrites your files.
+Visual Studio Marketplace routes), badgevet prints the suggested URL.
+
+## Fixing
+
+`scan` never touches your files. The separate `fix` command applies those
+suggestions in place:
+
+```sh
+badgevet fix              # rewrite broken badges in README.md
+badgevet fix docs/        # ...or across a directory of Markdown
+```
+
+It swaps only the badge image URL (leaving the surrounding link untouched),
+changes only broken badges that have a known replacement, and is idempotent.
+Broken badges with no known replacement are left alone and reported as
+`unfixable` (exit 1). `fix` is local-only; it does not work with `--github`.
+Since `scan` is read-only and `fix` mutates, they are separate commands with
+honest `mutating` markers in the [schema](https://clispec.dev).
 
 ## Options
 

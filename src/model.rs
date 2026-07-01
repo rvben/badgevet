@@ -86,3 +86,26 @@ impl Report {
         }
     }
 }
+
+/// A single badge URL rewritten in place by `fix`.
+#[derive(Debug, Clone, Serialize)]
+pub struct AppliedFix {
+    pub file: String,
+    pub old: String,
+    pub new: String,
+}
+
+/// The outcome of a `fix` run.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct FixResult {
+    pub fixed: Vec<AppliedFix>,
+    /// Broken badges left untouched because no replacement is known.
+    pub unfixable: usize,
+}
+
+impl FixResult {
+    /// Exit code: `1` when broken badges remain that could not be fixed.
+    pub fn exit_code(&self) -> i32 {
+        if self.unfixable > 0 { 1 } else { 0 }
+    }
+}
