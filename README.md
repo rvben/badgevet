@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/rvben/badgevet/actions/workflows/ci.yml/badge.svg)](https://github.com/rvben/badgevet/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/badgevet.svg)](https://crates.io/crates/badgevet)
-[![clispec](https://img.shields.io/badge/clispec-v0.2-blue)](https://clispec.dev)
+[![clispec compliant](https://img.shields.io/badge/clispec-compliant-3b82f6)](https://clispec.dev)
 
 Find retired and broken status badges in Markdown that link checkers miss.
 
