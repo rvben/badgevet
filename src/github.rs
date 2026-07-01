@@ -46,10 +46,18 @@ struct Readme {
 /// Fetch the README of every in-scope repo owned by `scope.owner`.
 pub fn fetch_readmes(http: &dyn Http, scope: &GitHubScope) -> Result<Vec<Document>, Error> {
     let repos = list_repos(http, scope)?;
-    let docs = crate::parallel_map(&repos, MAX_WORKERS, |_, repo| {
+    let outcomes = crate::parallel_map(&repos, MAX_WORKERS, |_, repo| {
         fetch_readme(http, scope, repo)
     });
-    Ok(docs.into_iter().flatten().collect())
+    // A single failed README fetch aborts the scan rather than silently
+    // dropping the repo: a partial owner-wide result must not look complete.
+    let mut documents = Vec::new();
+    for outcome in outcomes {
+        if let Some(document) = outcome? {
+            documents.push(document);
+        }
+    }
+    Ok(documents)
 }
 
 /// List and filter the owner's repositories, following pagination.
@@ -96,24 +104,45 @@ fn list_repos(http: &dyn Http, scope: &GitHubScope) -> Result<Vec<Repo>, Error> 
     Ok(repos)
 }
 
-/// Fetch and decode one repo's README, or `None` if it has none / cannot be read.
-fn fetch_readme(http: &dyn Http, scope: &GitHubScope, repo: &Repo) -> Option<Document> {
+/// Fetch and decode one repo's README.
+///
+/// `Ok(None)` when the repo has no README (404) or its content cannot be decoded;
+/// `Err` when the request itself failed (e.g. rate limiting), so a partial
+/// owner-wide scan is surfaced rather than mistaken for a complete one.
+fn fetch_readme(
+    http: &dyn Http,
+    scope: &GitHubScope,
+    repo: &Repo,
+) -> Result<Option<Document>, Error> {
     let url = format!("{API}/repos/{}/{}/readme", scope.owner, repo.name);
-    let body = http.get_github(&url).ok()??;
-    let readme: Readme = serde_json::from_str(&body).ok()?;
+    let body = match http.get_github(&url) {
+        Ok(Some(body)) => body,
+        Ok(None) => return Ok(None),
+        Err(e) => {
+            return Err(Error::GitHub {
+                message: format!("fetching README of {}: {e}", repo.full_name),
+            });
+        }
+    };
+    // A README we cannot decode is skipped, not fatal.
+    let Ok(readme) = serde_json::from_str::<Readme>(&body) else {
+        return Ok(None);
+    };
     if readme.encoding != "base64" {
-        return None;
+        return Ok(None);
     }
     // GitHub wraps the base64 payload at 60 columns; strip whitespace first.
     let payload: String = readme.content.split_whitespace().collect();
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(payload)
-        .ok()?;
-    let content = String::from_utf8(bytes).ok()?;
-    Some(Document {
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(payload) else {
+        return Ok(None);
+    };
+    let Ok(content) = String::from_utf8(bytes) else {
+        return Ok(None);
+    };
+    Ok(Some(Document {
         name: format!("{}/README.md", repo.full_name),
         content,
-    })
+    }))
 }
 
 /// Whether `full_name` ("owner/repo") belongs to `owner`, case-insensitively.
@@ -129,9 +158,25 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    /// A fake GitHub that matches request URLs by substring.
+    /// A fake GitHub that matches request URLs by substring. URLs matching any
+    /// `errors` substring return `Err`, simulating rate limiting or a 5xx.
     struct FakeGitHub {
         routes: HashMap<String, String>,
+        errors: Vec<String>,
+    }
+
+    impl FakeGitHub {
+        fn new(routes: HashMap<String, String>) -> Self {
+            Self {
+                routes,
+                errors: Vec::new(),
+            }
+        }
+
+        fn failing(mut self, needle: &str) -> Self {
+            self.errors.push(needle.to_string());
+            self
+        }
     }
 
     impl Http for FakeGitHub {
@@ -139,6 +184,9 @@ mod tests {
             Err("badge fetch not used in this test".into())
         }
         fn get_github(&self, url: &str) -> Result<Option<String>, String> {
+            if self.errors.iter().any(|n| url.contains(n.as_str())) {
+                return Err("HTTP 429 (rate limited)".into());
+            }
             for (needle, body) in &self.routes {
                 if url.contains(needle.as_str()) {
                     return Ok(Some(body.clone()));
@@ -169,15 +217,13 @@ mod tests {
             {"name":"forked","full_name":"acme/forked","fork":true,"archived":false,"private":false},
             {"name":"old","full_name":"acme/old","fork":false,"archived":true,"private":false}
         ]"#;
-        let http = FakeGitHub {
-            routes: HashMap::from([
-                ("/users/acme/repos".to_string(), repos.to_string()),
-                (
-                    "/repos/acme/good/readme".to_string(),
-                    readme_json("# Good\n![b](https://img.shields.io/x)\n"),
-                ),
-            ]),
-        };
+        let http = FakeGitHub::new(HashMap::from([
+            ("/users/acme/repos".to_string(), repos.to_string()),
+            (
+                "/repos/acme/good/readme".to_string(),
+                readme_json("# Good\n![b](https://img.shields.io/x)\n"),
+            ),
+        ]));
 
         let docs = fetch_readmes(&http, &scope()).unwrap();
         assert_eq!(docs.len(), 1, "fork and archived repos are skipped");
@@ -189,17 +235,29 @@ mod tests {
     fn repo_without_readme_is_skipped() {
         let repos = r#"[{"name":"empty","full_name":"acme/empty","fork":false,"archived":false,"private":false}]"#;
         // No readme route mapped, so get_github returns Ok(None) (a 404).
-        let http = FakeGitHub {
-            routes: HashMap::from([("/users/acme/repos".to_string(), repos.to_string())]),
-        };
+        let http = FakeGitHub::new(HashMap::from([(
+            "/users/acme/repos".to_string(),
+            repos.to_string(),
+        )]));
         assert!(fetch_readmes(&http, &scope()).unwrap().is_empty());
     }
 
     #[test]
     fn unknown_owner_is_an_error() {
-        let http = FakeGitHub {
-            routes: HashMap::new(),
-        };
+        let http = FakeGitHub::new(HashMap::new());
+        let err = fetch_readmes(&http, &scope()).unwrap_err();
+        assert_eq!(err.kind(), "github");
+    }
+
+    #[test]
+    fn readme_fetch_failure_is_surfaced_not_skipped() {
+        let repos = r#"[{"name":"good","full_name":"acme/good","fork":false,"archived":false,"private":false}]"#;
+        // The repo list succeeds, but its README fetch is rate-limited.
+        let http = FakeGitHub::new(HashMap::from([(
+            "/users/acme/repos".to_string(),
+            repos.to_string(),
+        )]))
+        .failing("/repos/acme/good/readme");
         let err = fetch_readmes(&http, &scope()).unwrap_err();
         assert_eq!(err.kind(), "github");
     }

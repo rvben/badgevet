@@ -155,16 +155,19 @@ pub fn apply_fixes(report: &Report) -> Result<FixResult, Error> {
         let mut seen = BTreeSet::new();
         let mut changed = false;
         for (old, new) in replacements {
-            if !seen.insert(old.clone()) || !content.contains(&old) {
+            if !seen.insert(old.clone()) {
                 continue;
             }
-            content = content.replace(&old, &new);
-            changed = true;
-            fixed.push(AppliedFix {
-                file: file.clone(),
-                old,
-                new,
-            });
+            let (updated, replaced) = replace_badge_url(&content, &old, &new);
+            if replaced > 0 {
+                content = updated;
+                changed = true;
+                fixed.push(AppliedFix {
+                    file: file.clone(),
+                    old,
+                    new,
+                });
+            }
         }
         if changed {
             std::fs::write(&file, content).map_err(|e| Error::Io {
@@ -175,6 +178,28 @@ pub fn apply_fixes(report: &Report) -> Result<FixResult, Error> {
     }
 
     Ok(FixResult { fixed, unfixable })
+}
+
+/// Replace `old` with `new`, but only where `old` appears as a Markdown image or
+/// link destination `](old)` or an HTML `src` attribute value. This scopes the
+/// rewrite to badge references, leaving the URL untouched if it also appears in
+/// prose or a code block. Returns the new content and the number of replacements.
+fn replace_badge_url(content: &str, old: &str, new: &str) -> (String, usize) {
+    let mut result = content.to_string();
+    let mut count = 0;
+    let patterns = [
+        (format!("]({old})"), format!("]({new})")),
+        (format!("src=\"{old}\""), format!("src=\"{new}\"")),
+        (format!("src='{old}'"), format!("src='{new}'")),
+    ];
+    for (from, to) in patterns {
+        let matches = result.matches(&from).count();
+        if matches > 0 {
+            result = result.replace(&from, &to);
+            count += matches;
+        }
+    }
+    (result, count)
 }
 
 /// Check every unique URL, up to [`MAX_WORKERS`] at a time.

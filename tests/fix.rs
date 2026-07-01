@@ -87,3 +87,25 @@ fn broken_without_suggestion_is_unfixable_and_file_untouched() {
             .contains(url)
     );
 }
+
+#[test]
+fn does_not_touch_the_url_in_prose_or_code() {
+    // The same URL appears as a badge and as a bare mention in prose; only the
+    // badge destination is rewritten.
+    let (dir, file) = write_readme(&format!("[![v]({OLD})](m)\n\nWe used `{OLD}` once.\n"));
+    let report = Report {
+        results: vec![broken(&file, OLD, Some(NEW))],
+    };
+    let result = apply_fixes(&report).unwrap();
+
+    assert_eq!(result.fixed.len(), 1);
+    let content = std::fs::read_to_string(dir.path().join("README.md")).unwrap();
+    assert!(
+        content.contains(&format!("]({NEW})")),
+        "badge destination rewritten"
+    );
+    assert!(
+        content.contains(&format!("`{OLD}`")),
+        "prose mention preserved"
+    );
+}
