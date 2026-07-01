@@ -2,13 +2,15 @@
 //!
 //! Follows The CLI Spec (clispec.dev): text on a TTY, JSON when piped,
 //! structured error envelopes on the last line of stderr, a `schema`
-//! subcommand, and mutation markers. Replace the example `run` logic with
-//! your own.
+//! subcommand, and mutation markers. Finding broken badges is a non-zero
+//! `outcome` (exit 1), not an error.
 
 use std::io::{IsTerminal, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
-use badgevet::{Error, OutputFormat, Request, run, schema};
+use badgevet::{Error, OutputFormat, Request, ReqwestHttp, RetryPolicy, render, run, schema};
 use clap::error::ErrorKind as ClapErrorKind;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use serde_json::json;
@@ -18,7 +20,7 @@ use serde_json::json;
     name = "badgevet",
     version,
     about = "Find retired and broken status badges in Markdown that link checkers miss",
-    long_about = "Find retired and broken status badges in Markdown that link checkers miss\n\nRun `badgevet schema` for the machine-readable contract (clispec.dev).",
+    long_about = "Find retired and broken status badges in Markdown that link checkers miss.\n\nA retired shields.io badge returns HTTP 200 with an SVG that reads \"retired badge\", so ordinary link checkers pass it. badgevet reads the rendered badge instead.\n\nRun `badgevet schema` for the machine-readable contract (clispec.dev).",
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true
 )]
@@ -26,9 +28,25 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// The integer to double (the default command). Replace with your own args.
-    #[arg(value_name = "VALUE")]
-    value: Option<String>,
+    /// Markdown files or directories to scan (default: README.md in the cwd).
+    #[arg(value_name = "PATH")]
+    paths: Vec<PathBuf>,
+
+    /// Report only permanently broken badges.
+    #[arg(long)]
+    only_broken: bool,
+
+    /// Also exit 1 on unconfirmed badges, not just broken ones.
+    #[arg(long)]
+    strict: bool,
+
+    /// Re-fetch an ambiguous badge this many times before reporting it unconfirmed.
+    #[arg(long, default_value_t = 2)]
+    retries: u32,
+
+    /// Per-request HTTP timeout, in seconds.
+    #[arg(long, default_value_t = 10)]
+    timeout: u64,
 
     /// Output format; auto = text on a TTY, JSON when piped.
     #[arg(long, short = 'o', value_enum, default_value = "auto", global = true)]
@@ -57,10 +75,10 @@ impl CliOutput {
     fn resolve(self) -> OutputFormat {
         match self {
             CliOutput::Json => OutputFormat::Json,
-            CliOutput::Text => OutputFormat::Text,
+            CliOutput::Text => OutputFormat::Table,
             CliOutput::Auto => {
                 if std::io::stdout().is_terminal() {
-                    OutputFormat::Text
+                    OutputFormat::Table
                 } else {
                     OutputFormat::Json
                 }
@@ -89,22 +107,30 @@ fn main() -> ExitCode {
         None => {}
     }
 
-    let Some(value) = cli.value.clone() else {
-        let err = Error::Usage {
-            message: "no value given (try `badgevet 21`)".into(),
-        };
-        emit_error(&err);
-        return ExitCode::from(err.exit_code() as u8);
+    let http = match ReqwestHttp::new(Duration::from_secs(cli.timeout)) {
+        Ok(http) => http,
+        Err(err) => {
+            emit_error(&err);
+            return ExitCode::from(err.exit_code() as u8);
+        }
     };
 
     let request = Request {
-        value,
+        paths: cli.paths.clone(),
         format: cli.output.resolve(),
+        strict: cli.strict,
+        only_broken: cli.only_broken,
+        retry: RetryPolicy {
+            retries: cli.retries,
+            backoff: Duration::from_millis(400),
+        },
     };
-    match run(&request) {
-        Ok(output) => {
-            let _ = writeln!(std::io::stdout(), "{output}");
-            ExitCode::SUCCESS
+
+    match run(&http, &request) {
+        Ok(report) => {
+            let out = render(&report, request.only_broken, request.format);
+            let _ = writeln!(std::io::stdout(), "{out}");
+            ExitCode::from(report.exit_code(request.strict) as u8)
         }
         Err(err) => {
             emit_error(&err);

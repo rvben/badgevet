@@ -4,31 +4,80 @@
 [![crates.io](https://img.shields.io/crates/v/badgevet.svg)](https://crates.io/crates/badgevet)
 [![clispec](https://img.shields.io/badge/clispec-v0.2-blue)](https://clispec.dev)
 
-Find retired and broken status badges in Markdown that link checkers miss
+Find retired and broken status badges in Markdown that link checkers miss.
+
+A retired shields.io badge returns **HTTP 200** with a valid SVG whose title
+reads `retired badge`, so ordinary link checkers (lychee, markdown-link-check)
+mark it OK. badgevet fetches each badge and reads the *rendered* SVG title
+instead, so it can tell a dead badge from a healthy one.
 
 ## Install
 
 ```sh
 cargo install badgevet
+# or a prebuilt binary, no recompile:
+cargo binstall badgevet
 ```
 
 ## Usage
 
 ```sh
-badgevet 21          # => 21 doubled is 42   (text on a TTY)
-badgevet 21 | jq .   # => {"value":21,"doubled":42}   (JSON when piped)
+badgevet                    # scan README.md in the current directory
+badgevet docs/ README.md    # scan files and directories (dirs recurse for *.md)
+badgevet --only-broken .    # report only permanently broken badges
+badgevet | jq .             # JSON when piped
 ```
 
-> This is the scaffolded example command. Replace the `run` logic in
-> `src/lib.rs`, the command in `src/schema.rs`, and these docs with your tool.
+Example:
+
+```text
+STATE        PROVIDER               LOCATION                   BADGE
+broken       shields.io             README.md:3                Version
+             -> https://vsmarketplacebadges.dev/version/rvben.rumdl.svg
+
+3 checked · 2 ok · 1 broken · 0 unconfirmed
+```
+
+## How it classifies
+
+Each badge lands in one of three states:
+
+| State | Meaning | Fails CI? |
+| --- | --- | --- |
+| `ok` | The badge renders a real value. | no |
+| `broken` | A deterministic dead state (`retired`, `deprecated`). | **yes (exit 1)** |
+| `unconfirmed` | Could not be verified: an ambiguous `invalid` / `inaccessible` / empty title, or a transient network failure. Retried with backoff first. | no (unless `--strict`) |
+
+The distinction is the point. shields.io renders `invalid` both for a genuinely
+bad badge and when its upstream API is merely rate-limiting, so `unconfirmed`
+never fails your build by default. Only an explicit, permanent dead state does.
+
+When a known-dead pattern has a modern replacement (e.g. shields.io's retired
+Visual Studio Marketplace routes), badgevet prints the suggested URL. It never
+rewrites your files.
+
+## Options
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--only-broken` | off | Report only permanently broken badges. |
+| `--strict` | off | Also exit 1 on `unconfirmed` badges. |
+| `--retries <n>` | `2` | Re-fetch an ambiguous badge before giving up. |
+| `--timeout <secs>` | `10` | Per-request HTTP timeout. |
+| `-o, --output <fmt>` | `auto` | `auto` (text on a TTY, JSON when piped), `json`, `text`. |
 
 ## Exit codes
 
 | code | meaning |
 | --- | --- |
-| `0` | success |
-| `1` | invalid input |
+| `0` | no broken badges |
+| `1` | at least one badge is permanently broken (or, with `--strict`, unconfirmed) |
+| `2` | a path could not be read, or the HTTP client failed to build |
 | `3` | usage error |
+
+Exit `1` is an [outcome](https://clispec.dev), not an error: stdout still carries
+the full report and no error envelope is written. This makes badgevet a natural
+CI or pre-commit gate.
 
 ## For agents (clispec)
 

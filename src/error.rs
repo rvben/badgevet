@@ -2,20 +2,24 @@
 //!
 //! Errors are reported as a clispec structured envelope on the last line of
 //! stderr: `{"error":{"kind":...,"message":...,"exit_code":...,"hint":...}}`.
-//! Add your own variants here as the tool grows; keep `kind()` snake_case and
-//! declare every kind in `schema.rs`.
+//! Note that finding broken badges is *not* an error: it is the exit-1 `outcome`
+//! declared in `schema.rs`, and writes a normal report to stdout.
 
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum Error {
-    /// Invalid command-line arguments (also wraps clap errors).
+    /// Invalid command-line arguments (also wraps clap errors) or no scan target.
     #[error("{message}")]
     Usage { message: String },
 
-    /// Example domain error - replace with your own.
-    #[error("not a number: {input:?}")]
-    InvalidInput { input: String },
+    /// A path could not be read.
+    #[error("{path}: {message}")]
+    Io { path: String, message: String },
+
+    /// The HTTP client could not be constructed.
+    #[error("{message}")]
+    Http { message: String },
 }
 
 impl Error {
@@ -23,7 +27,8 @@ impl Error {
     pub fn kind(&self) -> &'static str {
         match self {
             Error::Usage { .. } => "usage",
-            Error::InvalidInput { .. } => "invalid_input",
+            Error::Io { .. } => "io",
+            Error::Http { .. } => "http",
         }
     }
 
@@ -31,14 +36,15 @@ impl Error {
     pub fn hint(&self) -> Option<&'static str> {
         match self {
             Error::Usage { .. } => Some("see `badgevet --help` or `badgevet schema`"),
-            Error::InvalidInput { .. } => Some("pass an integer, e.g. `badgevet 21`"),
+            Error::Io { .. } => Some("check the path exists and is readable"),
+            Error::Http { .. } => Some("check network connectivity"),
         }
     }
 
     /// The process exit code associated with this error.
     pub fn exit_code(&self) -> i32 {
         match self {
-            Error::InvalidInput { .. } => 1,
+            Error::Io { .. } | Error::Http { .. } => 2,
             Error::Usage { .. } => 3,
         }
     }
