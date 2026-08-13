@@ -119,7 +119,7 @@ CI or pre-commit gate.
 
 badgevet follows [The CLI Spec](https://clispec.dev): structured output on
 stdout, structured error envelopes on the last line of stderr, and a `schema`
-subcommand whose output validates against `clispec.dev/schema/v0.2.json`
+subcommand whose output validates against `clispec.dev/schema/v0.3.json`
 (checked by the test suite).
 
 ```sh

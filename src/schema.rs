@@ -1,13 +1,13 @@
-//! The clispec v0.2 contract emitted by `badgevet schema`.
+//! The clispec v0.3 candidate contract emitted by `badgevet schema`.
 //!
-//! Conforms to <https://clispec.dev/schema/v0.2.json> (validated by a test
-//! against the vendored copy in `schemas/clispec-v0.2.json`). Keep this in sync
+//! Conforms to <https://clispec.dev/schema/v0.3.json> (validated by a test
+//! against the vendored copy in `schemas/clispec-v0.3.json`). Keep this in sync
 //! as commands, arguments, error kinds, and outcomes change.
 
 use serde_json::{Value, json};
 
 /// The version of The CLI Spec this document conforms to.
-pub const CLISPEC_VERSION: &str = "0.2";
+pub const CLISPEC_VERSION: &str = "0.3";
 
 /// Build the clispec contract as a JSON value.
 pub fn contract() -> Value {
@@ -16,9 +16,11 @@ pub fn contract() -> Value {
         "name": env!("CARGO_PKG_NAME"),
         "version": env!("CARGO_PKG_VERSION"),
         "description": env!("CARGO_PKG_DESCRIPTION"),
+        "output": {"tty": "text", "piped": "json"},
         "global_args": [
             {
                 "name": "--output",
+                "short": "-o",
                 "type": "string",
                 "enum": ["auto", "json", "text"],
                 "default": "auto",
@@ -29,7 +31,9 @@ pub fn contract() -> Value {
             {
                 "name": "scan",
                 "description": "Scan Markdown files for status badges and report their health. The default command, invoked as `badgevet [PATH...]`. With no paths, scans README.md in the current directory; a directory is scanned recursively for Markdown files.",
+                "effects": "read_only",
                 "mutating": false,
+                "cardinality": "bounded",
                 "stability": "stable",
                 "args": [
                     {"name": "path", "type": "path", "required": false, "description": "Markdown files or directories to scan, or `-` for stdin (default: README.md)."},
@@ -43,7 +47,7 @@ pub fn contract() -> Value {
                     {"name": "--timeout", "type": "integer", "default": 10, "description": "Per-request HTTP timeout, in seconds."}
                 ],
                 "output_fields": [
-                    {"name": "file", "type": "path", "description": "File the badge was found in."},
+                    {"name": "file", "type": "string", "description": "File the badge was found in."},
                     {"name": "line", "type": "integer", "description": "1-based line number of the badge."},
                     {"name": "label", "type": "string", "description": "Alt text of the badge image."},
                     {"name": "url", "type": "string", "description": "Badge image URL."},
@@ -57,7 +61,9 @@ pub fn contract() -> Value {
             {
                 "name": "fix",
                 "description": "Rewrite broken badges in local Markdown in place, using each one's known modern replacement (e.g. shields.io's retired Visual Studio Marketplace routes -> vsmarketplacebadges.dev). Scans the given paths (default README.md), applies the replacements `scan` suggests, and leaves broken badges with no known replacement untouched. Only local paths; not compatible with --github.",
+                "effects": "idempotent",
                 "mutating": true,
+                "cardinality": "bounded",
                 "stability": "stable",
                 "args": [
                     {"name": "path", "type": "path", "required": false, "description": "Markdown files or directories to fix (default: README.md)."},
@@ -65,7 +71,7 @@ pub fn contract() -> Value {
                     {"name": "--timeout", "type": "integer", "default": 10, "description": "Per-request HTTP timeout, in seconds."}
                 ],
                 "output_fields": [
-                    {"name": "file", "type": "path", "description": "File that was rewritten."},
+                    {"name": "file", "type": "string", "description": "File that was rewritten."},
                     {"name": "old", "type": "string", "description": "The broken badge URL that was replaced."},
                     {"name": "new", "type": "string", "description": "The replacement badge URL written in its place."}
                 ]
@@ -73,13 +79,19 @@ pub fn contract() -> Value {
             {
                 "name": "schema",
                 "description": "Print this clispec contract as JSON.",
+                "effects": "read_only",
                 "mutating": false,
+                "cardinality": "single",
+                "stdout_schema": {"$ref": "https://clispec.dev/schema/v0.3.json"},
                 "stability": "stable"
             },
             {
                 "name": "completions",
                 "description": "Generate a shell completion script.",
+                "effects": "read_only",
                 "mutating": false,
+                "output_kind": "opaque",
+                "media_type": "text/plain",
                 "stability": "stable",
                 "args": [
                     {"name": "shell", "type": "string", "required": true, "enum": ["bash", "zsh", "fish", "powershell", "elvish"], "description": "Target shell."}
