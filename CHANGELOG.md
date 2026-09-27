@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.2](https://github.com/rvben/badgevet/compare/v0.1.1...v0.1.2) - 2026-09-27
+
+### Fixed
+
+- **deps**: update rustls to 0.23.45 for RUSTSEC-2026-0285 ([8256857](https://github.com/rvben/badgevet/commit/82568576ada0d77e56de1d958d8f5700f4e8609e))
+- **ci**: install pinned Rust components ([d29bcfc](https://github.com/rvben/badgevet/commit/d29bcfc260ad152c574609a359413bb9a7e853a5))
+
 ## [0.1.0] - 2026-07-01
 
 ### Added
