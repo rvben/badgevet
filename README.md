@@ -13,6 +13,14 @@ instead, so it can tell a dead badge from a healthy one.
 
 ## Install
 
+### Homebrew
+
+```sh
+brew install rvben/tap/badgevet
+```
+
+### Other installation methods
+
 ```sh
 cargo install badgevet
 # or a prebuilt binary, no recompile:
